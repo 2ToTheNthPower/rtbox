@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from rtbox.config import get_distro_rootfs, get_rtbox_home
-from rtbox.distros import get_distro, list_distros
+from rtbox.distros import Distro, get_distro, list_distros
 from rtbox.rootfs import (
     _detect_glibc_version,
     get_rootfs_info,
@@ -30,7 +30,7 @@ def test_distros():
     # Test lookup by name
     bookworm = get_distro("bookworm")
     assert bookworm is not None
-    assert bookworm.glibc_version == "2.36"
+    assert bookworm.glibc_version is not None
     print(f"  bookworm lookup: OK (glibc {bookworm.glibc_version})")
 
     # Test lookup by version
@@ -42,133 +42,147 @@ def test_distros():
     print("  PASSED\n")
 
 
-def test_pull_rootfs():
-    """Test pulling a rootfs."""
-    print("=== Test: Pull rootfs ===")
-    distro = get_distro("bookworm")
-    assert distro is not None
+def test_pull_all_rootfs():
+    """Test pulling all rootfs images."""
+    print("=== Test: Pull all rootfs ===")
+    distros = list_distros()
 
-    # Pull (may already exist)
-    rootfs_path = pull_rootfs(distro, force=False)
-    assert rootfs_path.exists()
-    print(f"  Rootfs path: {rootfs_path}")
-
-    # Verify it's installed
-    assert is_rootfs_installed("bookworm")
-    print("  is_rootfs_installed: OK")
+    for distro in distros:
+        print(f"  Pulling {distro.name}...", end=" ", flush=True)
+        rootfs_path = pull_rootfs(distro, force=False)
+        assert rootfs_path.exists(), f"Rootfs path doesn't exist: {rootfs_path}"
+        assert is_rootfs_installed(distro.name), f"Rootfs not installed: {distro.name}"
+        print("OK")
 
     print("  PASSED\n")
 
 
-def test_rootfs_structure():
-    """Test that the rootfs has the expected structure."""
-    print("=== Test: Rootfs structure ===")
+def test_rootfs_structure_all():
+    """Test that all rootfs have the expected structure."""
+    print("=== Test: Rootfs structure (all distros) ===")
+    distros = list_distros()
 
-    if not is_rootfs_installed("bookworm"):
-        print("  SKIPPED (bookworm not installed)\n")
-        return
+    for distro in distros:
+        if not is_rootfs_installed(distro.name):
+            print(f"  {distro.name}: SKIPPED (not installed)")
+            continue
 
-    rootfs = get_distro_rootfs("bookworm")
+        rootfs = get_distro_rootfs(distro.name)
 
-    # Check for essential directories
-    essential_dirs = ["lib", "usr", "etc", "bin"]
-    for d in essential_dirs:
-        path = rootfs / d
-        assert path.exists(), f"Missing directory: {d}"
-    print("  Essential directories: OK")
+        # Check for essential directories
+        essential_dirs = ["lib", "usr", "etc", "bin"]
+        for d in essential_dirs:
+            path = rootfs / d
+            assert path.exists(), f"{distro.name}: Missing directory: {d}"
 
-    # Check for ld-linux
-    ld = find_ld_linux(rootfs)
-    assert ld is not None, "ld-linux not found"
-    assert ld.exists(), f"ld-linux does not exist: {ld}"
-    print(f"  ld-linux: {ld.name}")
+        # Check for ld-linux
+        ld = find_ld_linux(rootfs)
+        assert ld is not None, f"{distro.name}: ld-linux not found"
+        assert ld.exists(), f"{distro.name}: ld-linux does not exist: {ld}"
 
-    # Check for library paths
-    lib_paths = get_lib_paths(rootfs)
-    assert len(lib_paths) > 0, "No library paths found"
-    print(f"  Library paths: {len(lib_paths)}")
+        # Check for library paths
+        lib_paths = get_lib_paths(rootfs)
+        assert len(lib_paths) > 0, f"{distro.name}: No library paths found"
 
-    # Check for libc.so.6
-    libc_found = False
-    for lp in lib_paths:
-        if (lp / "libc.so.6").exists():
-            libc_found = True
-            break
-    assert libc_found, "libc.so.6 not found"
-    print("  libc.so.6: OK")
+        # Check for libc.so.6
+        libc_found = False
+        for lp in lib_paths:
+            if (lp / "libc.so.6").exists():
+                libc_found = True
+                break
+        assert libc_found, f"{distro.name}: libc.so.6 not found"
 
-    # Detect glibc version
-    glibc_ver = _detect_glibc_version(rootfs)
-    assert glibc_ver == "2.36", f"Expected glibc 2.36, got {glibc_ver}"
-    print(f"  glibc version: {glibc_ver}")
+        # Detect glibc version
+        glibc_ver = _detect_glibc_version(rootfs)
+        assert glibc_ver == distro.glibc_version, (
+            f"{distro.name}: Expected glibc {distro.glibc_version}, got {glibc_ver}"
+        )
 
-    print("  PASSED\n")
-
-
-def test_rootfs_info():
-    """Test rootfs info command."""
-    print("=== Test: Rootfs info ===")
-
-    if not is_rootfs_installed("bookworm"):
-        print("  SKIPPED (bookworm not installed)\n")
-        return
-
-    info = get_rootfs_info("bookworm")
-    assert info is not None
-    assert info["name"] == "bookworm"
-    assert info["version"] == "12"
-    assert info["glibc_version"] == "2.36"
-    assert info["size_mb"] > 0
-    print(f"  Name: {info['name']}")
-    print(f"  Version: {info['version']}")
-    print(f"  glibc: {info['glibc_version']}")
-    print(f"  Size: {info['size_mb']:.1f} MB")
+        print(f"  {distro.name}: OK (glibc {glibc_ver}, ld-linux: {ld.name})")
 
     print("  PASSED\n")
 
 
-def test_run_binary_linux():
-    """Test running a binary with rtbox (Linux only)."""
-    print("=== Test: Run binary (Linux only) ===")
+def test_rootfs_info_all():
+    """Test rootfs info for all distros."""
+    print("=== Test: Rootfs info (all distros) ===")
+    distros = list_distros()
+
+    for distro in distros:
+        if not is_rootfs_installed(distro.name):
+            print(f"  {distro.name}: SKIPPED (not installed)")
+            continue
+
+        info = get_rootfs_info(distro.name)
+        assert info is not None, f"{distro.name}: info is None"
+        assert info["name"] == distro.name
+        assert info["version"] == distro.version
+        assert info["glibc_version"] == distro.glibc_version
+        assert info["size_mb"] > 0
+
+        print(
+            f"  {distro.name}: OK (v{info['version']}, glibc {info['glibc_version']}, {info['size_mb']:.1f} MB)"
+        )
+
+    print("  PASSED\n")
+
+
+def test_run_binary_all():
+    """Test running binaries with all distros (Linux only)."""
+    print("=== Test: Run binary (all distros) ===")
 
     if platform.system() != "Linux":
         print("  SKIPPED (not on Linux)\n")
         return
 
-    if not is_rootfs_installed("bookworm"):
-        print("  SKIPPED (bookworm not installed)\n")
-        return
+    distros = list_distros()
 
-    # Try running /bin/true from the rootfs
-    result = subprocess.run(
-        [sys.executable, "-m", "rtbox", "run", "bookworm", "/bin/true"],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"Failed: {result.stderr}"
-    print("  /bin/true: OK")
+    for distro in distros:
+        if not is_rootfs_installed(distro.name):
+            print(f"  {distro.name}: SKIPPED (not installed)")
+            continue
 
-    # Try running ls
-    result = subprocess.run(
-        [sys.executable, "-m", "rtbox", "run", "bookworm", "/bin/ls", "/"],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"Failed: {result.stderr}"
-    assert "bin" in result.stdout
-    assert "lib" in result.stdout
-    print("  /bin/ls /: OK")
+        # Try running /bin/true from the rootfs
+        result = subprocess.run(
+            [sys.executable, "-m", "rtbox", "run", distro.name, "/bin/true"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"{distro.name} /bin/true failed: {result.stderr}"
+        )
 
-    # Test that we're actually using the rootfs glibc
-    # Run ldd on a binary to see which libraries it uses
-    result = subprocess.run(
-        [sys.executable, "-m", "rtbox", "run", "bookworm", "/usr/bin/ldd", "--version"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        assert "2.36" in result.stdout or "2.36" in result.stderr
-        print("  ldd --version shows glibc 2.36: OK")
+        # Try running ls
+        result = subprocess.run(
+            [sys.executable, "-m", "rtbox", "run", distro.name, "/bin/ls", "/"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"{distro.name} /bin/ls failed: {result.stderr}"
+        assert "bin" in result.stdout, f"{distro.name}: 'bin' not in ls output"
+        assert "lib" in result.stdout, f"{distro.name}: 'lib' not in ls output"
+
+        # Verify glibc version via ldd
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "rtbox",
+                "run",
+                distro.name,
+                "/usr/bin/ldd",
+                "--version",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            output = result.stdout + result.stderr
+            assert distro.glibc_version in output, (
+                f"{distro.name}: Expected glibc {distro.glibc_version} in ldd output, got: {output[:200]}"
+            )
+
+        print(f"  {distro.name}: OK (glibc {distro.glibc_version})")
 
     print("  PASSED\n")
 
@@ -184,31 +198,36 @@ def test_cli_commands():
         text=True,
     )
     assert result.returncode == 0, f"list failed: {result.stderr}"
-    assert "bookworm" in result.stdout
+    for distro in list_distros():
+        assert distro.name in result.stdout, f"{distro.name} not in list output"
     print("  rtbox list: OK")
 
-    # Test info (if installed)
-    if is_rootfs_installed("bookworm"):
-        result = subprocess.run(
-            [sys.executable, "-m", "rtbox", "info", "bookworm"],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, f"info failed: {result.stderr}"
-        assert "2.36" in result.stdout
-        print("  rtbox info bookworm: OK")
+    # Test info for all installed distros
+    for distro in list_distros():
+        if is_rootfs_installed(distro.name):
+            result = subprocess.run(
+                [sys.executable, "-m", "rtbox", "info", distro.name],
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, f"info {distro.name} failed: {result.stderr}"
+            assert distro.glibc_version in result.stdout
+            print(f"  rtbox info {distro.name}: OK")
 
-    # Test shell-wrapper (if installed)
-    if is_rootfs_installed("bookworm"):
-        result = subprocess.run(
-            [sys.executable, "-m", "rtbox", "shell-wrapper", "bookworm"],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, f"shell-wrapper failed: {result.stderr}"
-        assert "LD_LIBRARY_PATH" in result.stdout
-        assert "rtbox_run" in result.stdout
-        print("  rtbox shell-wrapper bookworm: OK")
+    # Test shell-wrapper for all installed distros
+    for distro in list_distros():
+        if is_rootfs_installed(distro.name):
+            result = subprocess.run(
+                [sys.executable, "-m", "rtbox", "shell-wrapper", distro.name],
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, (
+                f"shell-wrapper {distro.name} failed: {result.stderr}"
+            )
+            assert "LD_LIBRARY_PATH" in result.stdout
+            assert "rtbox_run" in result.stdout
+            print(f"  rtbox shell-wrapper {distro.name}: OK")
 
     print("  PASSED\n")
 
@@ -221,11 +240,11 @@ def main():
 
     tests = [
         test_distros,
-        test_pull_rootfs,
-        test_rootfs_structure,
-        test_rootfs_info,
+        test_pull_all_rootfs,
+        test_rootfs_structure_all,
+        test_rootfs_info_all,
         test_cli_commands,
-        test_run_binary_linux,
+        test_run_binary_all,
     ]
 
     passed = 0

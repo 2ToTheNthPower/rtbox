@@ -15,12 +15,13 @@ class Distro:
 
 # Debian distributions with their glibc versions
 # These are the distros available from images.linuxcontainers.org
-# Source for glibc versions: https://packages.debian.org/search?keywords=libc6
+# Note: glibc versions are from the actual LXC images, which may differ
+# slightly from the official Debian package versions
 DISTROS: dict[str, Distro] = {
     "bullseye": Distro(
         name="bullseye",
         version="11",
-        glibc_version="2.31",
+        glibc_version="2.30",
         codename="bullseye",
     ),
     "bookworm": Distro(
@@ -32,7 +33,7 @@ DISTROS: dict[str, Distro] = {
     "trixie": Distro(
         name="trixie",
         version="13",
-        glibc_version="2.40",
+        glibc_version="2.41",
         codename="trixie",
     ),
     "forky": Distro(

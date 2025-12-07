@@ -70,9 +70,7 @@ def _get_latest_image_path(distro_name: str, arch: str) -> str:
             response = client.get(base_url)
             response.raise_for_status()
     except httpx.HTTPError as e:
-        raise RootfsError(
-            f"Failed to fetch image list for {distro_name}: {e}"
-        ) from e
+        raise RootfsError(f"Failed to fetch image list for {distro_name}: {e}") from e
 
     # Parse directory listing to find date directories
     # Format: 20251206_05:24/ (colon may be URL-encoded as %3A)
@@ -164,9 +162,7 @@ def _pull_from_lxc(distro: Distro, rootfs_path: Path) -> None:
         # Download the tarball
         tmp_path: str | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".tar.xz", delete=False
-            ) as tmp:
+            with tempfile.NamedTemporaryFile(suffix=".tar.xz", delete=False) as tmp:
                 tmp_path = tmp.name
 
             # Stream download with progress
@@ -194,9 +190,7 @@ def _pull_from_lxc(distro: Distro, rootfs_path: Path) -> None:
             if result.returncode != 0:
                 raise RootfsError(f"Failed to extract rootfs: {result.stderr}")
 
-            progress.update(
-                task, description=f"[green]Installed {distro.name}[/green]"
-            )
+            progress.update(task, description=f"[green]Installed {distro.name}[/green]")
 
         except httpx.HTTPError as e:
             raise RootfsError(f"Failed to download rootfs: {e}") from e
@@ -247,28 +241,44 @@ def _detect_glibc_version(rootfs_path: Path) -> str | None:
         rootfs_path / "lib64",
         rootfs_path / "lib",
         rootfs_path / "lib" / "aarch64-linux-gnu",
+        rootfs_path / "usr" / "lib" / "x86_64-linux-gnu",
+        rootfs_path / "usr" / "lib64",
+        rootfs_path / "usr" / "lib",
+        rootfs_path / "usr" / "lib" / "aarch64-linux-gnu",
     ]
 
     for lib_path in lib_paths:
         libc = lib_path / "libc.so.6"
         if libc.exists():
-            # Try to run the libc to get version (it prints version when executed)
-            # This won't work on macOS, so we'll fall back to readelf or strings
             try:
                 result = subprocess.run(
                     ["strings", str(libc)],
                     capture_output=True,
                     text=True,
                 )
+                # Look for GLIBC_X.XX version symbols and find the highest one
+                # These appear as "GLIBC_2.36", "GLIBC_2.35", etc.
+                versions = []
                 for line in result.stdout.split("\n"):
-                    if "GNU C Library" in line and "release version" in line:
-                        # Extract version like "2.36"
-                        parts = line.split()
-                        for i, part in enumerate(parts):
-                            if part == "version":
-                                return parts[i + 1].rstrip(",.")
-                    elif line.startswith("glibc "):
-                        return line.split()[1]
+                    line = line.strip()
+                    if (
+                        line.startswith("GLIBC_")
+                        and line != "GLIBC_PRIVATE"
+                        and "ABI" not in line
+                    ):
+                        version = line.replace("GLIBC_", "")
+                        try:
+                            # Parse as version tuple for proper comparison
+                            parts = tuple(int(x) for x in version.split("."))
+                            versions.append((parts, version))
+                        except ValueError:
+                            pass
+
+                if versions:
+                    # Return the highest version
+                    versions.sort(key=lambda x: x[0], reverse=True)
+                    return versions[0][1]
+
             except Exception:
                 pass
 

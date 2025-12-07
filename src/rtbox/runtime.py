@@ -16,32 +16,57 @@ class RuntimeError(Exception):
 
 
 def find_ld_linux(rootfs_path: Path) -> Path | None:
-    """Find the ld-linux dynamic linker in the rootfs."""
-    # Common locations for ld-linux
+    """Find the ld-linux dynamic linker in the rootfs.
+
+    Important: We must return the actual file, not a symlink, because symlinks
+    in the rootfs may be absolute paths that would resolve to the host system's
+    linker instead of the rootfs one.
+    """
+    # Common locations for ld-linux - prefer arch-specific paths first
+    # because lib64 often contains symlinks with absolute paths
     candidates = [
-        # x86_64
-        rootfs_path / "lib64" / "ld-linux-x86-64.so.2",
+        # x86_64 - check the actual lib path first, not lib64 symlink
         rootfs_path / "lib" / "x86_64-linux-gnu" / "ld-linux-x86-64.so.2",
+        rootfs_path / "lib64" / "ld-linux-x86-64.so.2",
         # aarch64
-        rootfs_path / "lib" / "ld-linux-aarch64.so.1",
         rootfs_path / "lib" / "aarch64-linux-gnu" / "ld-linux-aarch64.so.1",
+        rootfs_path / "lib" / "ld-linux-aarch64.so.1",
         # Generic
         rootfs_path / "lib" / "ld-linux.so.2",
     ]
 
     for candidate in candidates:
         if candidate.exists():
+            # If it's a symlink, check if it's absolute (points outside rootfs)
+            if candidate.is_symlink():
+                link_target = os.readlink(candidate)
+                if link_target.startswith("/"):
+                    # Absolute symlink - skip it, it would resolve to host
+                    continue
             return candidate
 
-    # Try to find it with glob
-    for pattern in ["lib*/ld-linux*.so*", "lib/*/ld-linux*.so*"]:
+    # Try to find it with glob, preferring non-symlinks
+    for pattern in ["lib/*/ld-linux*.so*", "lib*/ld-linux*.so*"]:
         matches = list(rootfs_path.glob(pattern))
         if matches:
-            # Prefer .so.2 files
+            # Filter out absolute symlinks and prefer .so.2/.so.1 files
+            valid = []
             for m in matches:
+                if m.is_symlink():
+                    link_target = os.readlink(m)
+                    if link_target.startswith("/"):
+                        continue
                 if ".so.2" in m.name or ".so.1" in m.name:
-                    return m
-            return matches[0]
+                    valid.append(m)
+            if valid:
+                return valid[0]
+            # Fallback to any match that's not an absolute symlink
+            for m in matches:
+                if m.is_symlink():
+                    link_target = os.readlink(m)
+                    if link_target.startswith("/"):
+                        continue
+                return m
 
     return None
 
@@ -131,6 +156,27 @@ def build_runtime_env(
     return env
 
 
+def resolve_command(rootfs_path: Path, command: list[str]) -> list[str]:
+    """Resolve command paths relative to the rootfs.
+
+    If the command starts with an absolute path (e.g., /bin/ls), prepend
+    the rootfs path to it so we run the binary from the rootfs, not the host.
+    """
+    if not command:
+        return command
+
+    result = list(command)
+    executable = result[0]
+
+    # If it's an absolute path, prepend the rootfs
+    if executable.startswith("/"):
+        rootfs_executable = rootfs_path / executable.lstrip("/")
+        if rootfs_executable.exists():
+            result[0] = str(rootfs_executable)
+
+    return result
+
+
 def run_with_glibc(
     distro_name: str,
     command: list[str],
@@ -146,7 +192,8 @@ def run_with_glibc(
 
     Args:
         distro_name: Name of the distro (e.g., "bookworm")
-        command: Command and arguments to run
+        command: Command and arguments to run (absolute paths like /bin/ls
+                 are resolved to the rootfs)
         extra_lib_paths: Additional library paths to include
         working_dir: Working directory for the command
         env_vars: Additional environment variables to set
@@ -173,6 +220,9 @@ def run_with_glibc(
             "The rootfs may be incomplete or corrupted."
         )
 
+    # Resolve command paths relative to rootfs
+    resolved_command = resolve_command(rootfs_path, command)
+
     # Build a clean environment to avoid host glibc interference
     env = build_runtime_env(rootfs_path, extra_lib_paths)
 
@@ -191,7 +241,7 @@ def run_with_glibc(
         "",
         "--library-path",
         lib_path,
-        *command,
+        *resolved_command,
     ]
 
     # Run the command
@@ -236,6 +286,9 @@ def exec_with_glibc(
     if not ld_linux:
         raise RuntimeError(f"Could not find ld-linux in rootfs at {rootfs_path}")
 
+    # Resolve command paths relative to rootfs
+    resolved_command = resolve_command(rootfs_path, command)
+
     # Build a clean environment to avoid host glibc interference
     env = build_runtime_env(rootfs_path, extra_lib_paths)
 
@@ -252,7 +305,7 @@ def exec_with_glibc(
         "",
         "--library-path",
         lib_path,
-        *command,
+        *resolved_command,
     ]
 
     # Replace the current process
