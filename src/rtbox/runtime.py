@@ -234,11 +234,11 @@ def run_with_glibc(
     lib_path = env.get("LD_LIBRARY_PATH", "")
 
     # The command to run: use ld.so directly with --library-path
-    # --inhibit-rpath: ignore RPATH/RUNPATH in binaries to force use of our libs
+    # Note: We don't use --inhibit-rpath because user binaries may have RPATH
+    # pointing to custom library locations (common on HPCs with module systems).
+    # Our library path is searched first, so rootfs libs take precedence.
     full_command = [
         str(ld_linux),
-        "--inhibit-rpath",
-        "",
         "--library-path",
         lib_path,
         *resolved_command,
@@ -297,12 +297,9 @@ def exec_with_glibc(
         env.update(env_vars)
 
     # Build the full command
-    # --inhibit-rpath: ignore RPATH/RUNPATH in binaries to force use of our libs
     lib_path = env.get("LD_LIBRARY_PATH", "")
     full_command = [
         str(ld_linux),
-        "--inhibit-rpath",
-        "",
         "--library-path",
         lib_path,
         *resolved_command,
@@ -341,7 +338,7 @@ export LD_LIBRARY_PATH="{lib_path_str}"
 
 # Function to run commands with the rtbox glibc
 rtbox_run() {{
-    "{ld_linux}" --inhibit-rpath "" --library-path "$LD_LIBRARY_PATH" "$@"
+    "{ld_linux}" --library-path "$LD_LIBRARY_PATH" "$@"
 }}
 
 # If arguments were passed, run them
