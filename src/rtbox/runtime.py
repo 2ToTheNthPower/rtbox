@@ -83,10 +83,19 @@ def build_runtime_env(
         "LD_PRELOAD",
         "LD_AUDIT",
         "LD_DEBUG",
+        "LD_DEBUG_OUTPUT",
         "LD_PROFILE",
+        "LD_PROFILE_OUTPUT",
         "LD_BIND_NOW",
         "LD_BIND_NOT",
         "LD_DYNAMIC_WEAK",
+        "LD_HWCAP_MASK",
+        "LD_ORIGIN_PATH",
+        "LD_POINTER_GUARD",
+        "LD_SHOW_AUXV",
+        "LD_USE_LOAD_BIAS",
+        "LD_VERBOSE",
+        "LD_WARN",
         "MALLOC_CHECK_",
         "MALLOC_PERTURB_",
         "MALLOC_MMAP_THRESHOLD_",
@@ -97,12 +106,25 @@ def build_runtime_env(
         "MALLOC_ARENA_TEST",
         "GLIBC_TUNABLES",
         "LIBC_FATAL_STDERR_",
-        # Stack canary related - these can cause "stack smashing detected"
+        # Stack protection related - these can cause "stack smashing detected"
         # when the canary format differs between glibc versions
+        "SSP_SMASH_DUMPS_CORE",
         "__GL_THREADED_OPTIMIZATIONS",
+        # Ubuntu/Debian specific hardening that can conflict
+        "UBUNTU_MENUPROXY",
+        "LIBOVERLAY_SCROLLBAR",
     ]
     for var in problematic_vars:
         env.pop(var, None)
+
+    # Also remove any vars starting with certain prefixes that might cause issues
+    prefixes_to_remove = ["FORTIFY_", "ASAN_", "MSAN_", "TSAN_", "UBSAN_", "LSAN_"]
+    env_keys = list(env.keys())
+    for key in env_keys:
+        for prefix in prefixes_to_remove:
+            if key.startswith(prefix):
+                env.pop(key, None)
+                break
 
     # Get library paths from the rootfs
     lib_paths = get_lib_paths(rootfs_path)
@@ -174,9 +196,11 @@ def run_with_glibc(
     lib_path = env.get("LD_LIBRARY_PATH", "")
 
     # The command to run: use ld.so directly with --library-path
-    # Use --inhibit-rpath to ignore RPATH/RUNPATH in binaries, forcing use of our library path
+    # --inhibit-rpath: ignore RPATH/RUNPATH in binaries, forcing use of our library path
+    # --inhibit-cache: don't use /etc/ld.so.cache, which may reference host libraries
     full_command = [
         str(ld_linux),
+        "--inhibit-cache",
         "--inhibit-rpath",
         "",
         "--library-path",
@@ -234,10 +258,12 @@ def exec_with_glibc(
         env.update(env_vars)
 
     # Build the full command
-    # Use --inhibit-rpath to ignore RPATH/RUNPATH in binaries, forcing use of our library path
+    # --inhibit-rpath: ignore RPATH/RUNPATH in binaries, forcing use of our library path
+    # --inhibit-cache: don't use /etc/ld.so.cache, which may reference host libraries
     lib_path = env.get("LD_LIBRARY_PATH", "")
     full_command = [
         str(ld_linux),
+        "--inhibit-cache",
         "--inhibit-rpath",
         "",
         "--library-path",
@@ -278,7 +304,7 @@ export LD_LIBRARY_PATH="{lib_path_str}"
 
 # Function to run commands with the rtbox glibc
 rtbox_run() {{
-    "{ld_linux}" --inhibit-rpath "" --library-path "$LD_LIBRARY_PATH" "$@"
+    "{ld_linux}" --inhibit-cache --inhibit-rpath "" --library-path "$LD_LIBRARY_PATH" "$@"
 }}
 
 # If arguments were passed, run them
