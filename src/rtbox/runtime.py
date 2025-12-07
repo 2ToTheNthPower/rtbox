@@ -77,6 +77,33 @@ def build_runtime_env(
     """Build the environment for running with a different glibc."""
     env = dict(os.environ) if preserve_env else {}
 
+    # Remove environment variables that can interfere with glibc/ld.so
+    # These can cause crashes or unexpected behavior when using a different glibc
+    problematic_vars = [
+        "LD_PRELOAD",
+        "LD_AUDIT",
+        "LD_DEBUG",
+        "LD_PROFILE",
+        "LD_BIND_NOW",
+        "LD_BIND_NOT",
+        "LD_DYNAMIC_WEAK",
+        "MALLOC_CHECK_",
+        "MALLOC_PERTURB_",
+        "MALLOC_MMAP_THRESHOLD_",
+        "MALLOC_TRIM_THRESHOLD_",
+        "MALLOC_TOP_PAD_",
+        "MALLOC_MMAP_MAX_",
+        "MALLOC_ARENA_MAX",
+        "MALLOC_ARENA_TEST",
+        "GLIBC_TUNABLES",
+        "LIBC_FATAL_STDERR_",
+        # Stack canary related - these can cause "stack smashing detected"
+        # when the canary format differs between glibc versions
+        "__GL_THREADED_OPTIMIZATIONS",
+    ]
+    for var in problematic_vars:
+        env.pop(var, None)
+
     # Get library paths from the rootfs
     lib_paths = get_lib_paths(rootfs_path)
     lib_path_strs = [str(p) for p in lib_paths]
@@ -147,8 +174,11 @@ def run_with_glibc(
     lib_path = env.get("LD_LIBRARY_PATH", "")
 
     # The command to run: use ld.so directly with --library-path
+    # Use --inhibit-rpath to ignore RPATH/RUNPATH in binaries, forcing use of our library path
     full_command = [
         str(ld_linux),
+        "--inhibit-rpath",
+        "",
         "--library-path",
         lib_path,
         *command,
@@ -204,9 +234,12 @@ def exec_with_glibc(
         env.update(env_vars)
 
     # Build the full command
+    # Use --inhibit-rpath to ignore RPATH/RUNPATH in binaries, forcing use of our library path
     lib_path = env.get("LD_LIBRARY_PATH", "")
     full_command = [
         str(ld_linux),
+        "--inhibit-rpath",
+        "",
         "--library-path",
         lib_path,
         *command,
@@ -245,7 +278,7 @@ export LD_LIBRARY_PATH="{lib_path_str}"
 
 # Function to run commands with the rtbox glibc
 rtbox_run() {{
-    "{ld_linux}" --library-path "$LD_LIBRARY_PATH" "$@"
+    "{ld_linux}" --inhibit-rpath "" --library-path "$LD_LIBRARY_PATH" "$@"
 }}
 
 # If arguments were passed, run them
